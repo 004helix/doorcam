@@ -1,0 +1,18 @@
+---
+secrets:
+  ttl: 3600
+  bits: 96
+  keys:
+    user1: pass1
+    user2: pass2
+    user3: pass3
+
+action:
+  # minimum interval in seconds
+  interval: 3
+  url:      'http://openhab.local/rest/items/Doorlock'
+  method:   'POST'
+  payload:  'OFF'
+  headers:
+    Content-Type: 'text/plain'
+    Accept: 'application/json'

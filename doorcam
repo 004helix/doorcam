@@ -1,0 +1,313 @@
+#!/usr/bin/python3
+
+from threading import Lock
+import ctypes as ct
+import importlib
+import logging
+import signal
+import struct
+import mmap
+import time
+import sys
+import os
+import os.path
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(ROOT, 'lib', 'python'))
+os.environ['PATH'] = os.path.join(ROOT, 'bin') \
+    + os.pathsep + os.environ['PATH']
+
+from turbojpeg import TJDecompress
+from v4l2mjpg import V4L2MJpg
+from motion import Motion
+
+
+#
+# def setproctitle
+#
+try:
+    from setproctitle import setproctitle
+except ImportError:
+    def setproctitle(title):
+        pass
+
+# global vars
+main_lock = Lock()
+childs = dict()
+childs_lock = Lock()
+outr, outw = os.pipe()
+force_motion = False
+
+
+def sigchld_handler(signum, frame):
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            return
+
+        if pid == 0:
+            return
+
+        logging.info('process #{} died'.format(pid))
+
+        for name, child in childs.items():
+            with childs_lock:
+                if child['pid'] != pid:
+                    continue
+
+                os.close(child['pipe'])
+                child['pid'] = 0
+
+            if main_lock.acquire(False):
+                # main process waiting for
+                # the next frame from v4l2
+                # or detecting motion
+                main_lock.release()
+            else:
+                # main process waiting for
+                # reply from whis child
+                os.write(outw, b'\0')
+
+
+def sigusr1_handler(signum, frame):
+    global force_motion
+    force_motion = not force_motion
+
+
+class MotionDetection():
+    # threshold - threshold for number of changed pixels that triggers motion
+    # noise_level - noise threshold for the motion detection (grayscale)
+    def __init__(self, w, h, threshold=200, noise_level=28, skip=3):
+        self.md = Motion()
+        self.tjd = TJDecompress()
+
+        self.frame0 = mmap.mmap(
+            -1, h * w,
+            mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
+            mmap.PROT_READ | mmap.PROT_WRITE
+        )
+        self.frame1 = mmap.mmap(
+            -1, h * w,
+            mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
+            mmap.PROT_READ | mmap.PROT_WRITE
+        )
+
+        self.addr0 = ct.addressof(ct.c_char.from_buffer(self.frame0))
+        self.addr1 = ct.addressof(ct.c_char.from_buffer(self.frame1))
+
+        self.skip = skip
+        self.counter = -1
+        self.threshold = threshold
+        self.noise_level = noise_level
+
+        self.w = w
+        self.h = h
+
+        self.motion = False
+
+    def process(self, addr, size, w, h):
+        if self.counter == -1:
+            self.counter = self.skip
+            self.addr = self.addr0
+            self.tjd.decompress(
+                addr, size,
+                self.addr,
+                self.w, self.h,
+                self.tjd.TJPF_GRAY
+            )
+            return False
+
+        if self.counter > 0:
+            self.counter -= 1
+            return self.motion
+
+        if self.addr == self.addr0:
+            self.addr = self.addr1
+        else:
+            self.addr = self.addr0
+
+        self.counter = self.skip
+        self.tjd.decompress(
+            addr, size,
+            self.addr,
+            self.w, self.h,
+            self.tjd.TJPF_GRAY
+        )
+
+        # sse4.2
+        cnt = self.md.count_different_bytes(
+            self.addr0,
+            self.addr1,
+            self.w * self.h,
+            self.noise_level
+        )
+
+        self.motion = cnt > self.threshold
+        return self.motion
+
+
+def plugin_start(name, rfd, wfd, initial_width, initial_height, fps):
+    setproctitle('doorcam-' + name)
+
+    # restore default signal handlers
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    signal.signal(signal.SIGUSR1, signal.SIG_DFL)
+
+    # import plugin
+    module = importlib.import_module(f'plugins.{name}')
+
+    # prerpare release callback
+    class Callback(object):
+
+        def __init__(self, fd):
+            self.fd = fd
+            self.mv = None
+
+        def __call__(self):
+            if not self.done:
+                os.write(self.fd, b'\0')
+                self.done = True
+                self.mv.release()
+                self.mv = None
+
+        def arm(self, mv):
+            self.done = False
+            self.mv = mv
+
+    release_cb = Callback(wfd)
+
+    # init plugin
+    plugin = module.Plugin(
+        logging.getLogger(name),
+        release_cb,
+        initial_width,
+        initial_height,
+        fps
+    )
+
+    s = struct.Struct('@dLIHH?')
+    r = os.fdopen(rfd, 'rb', s.size)
+    b = bytearray(s.size)
+
+    # loop
+    while True:
+        if r.readinto(b) < s.size:
+            return
+
+        ts, addr, size, width, height, motion = s.unpack(b)
+
+        # dirty magic
+        jpeg = memoryview((ct.c_char * size).from_address(addr)).cast('B')
+        release_cb.arm(jpeg)
+        plugin.process(ts, jpeg, width, height, motion)
+        if not release_cb.done:
+            release_cb()
+
+
+def main():
+    setproctitle('doorcam')
+
+    plugins_dir = os.path.join(ROOT, 'plugins')
+
+    md = MotionDetection(720, 405)
+    v4l2 = V4L2MJpg('/dev/video0', 1920, 1080)
+    signal.signal(signal.SIGCHLD, sigchld_handler)
+    signal.signal(signal.SIGUSR1, sigusr1_handler)
+
+    if v4l2.fps[0] == 0 or v4l2.fps[1] == 0:
+        raise Exception('Unknown fps after opening v4l2 device')
+
+    for fn in os.listdir(plugins_dir):
+        if not fn.endswith('.py'):
+            continue
+
+        if not os.path.isfile(os.path.join(plugins_dir, fn)):
+            continue
+
+        name = fn[:-3]
+
+        childs[name] = {
+            'pid': 0,
+            'pipe': None,
+            'start': 0.0
+        }
+
+    pack = struct.Struct('@dLIHH?').pack
+
+    v4l2.start()
+
+    while True:
+        addr, size, width, height = v4l2.dqbuf()
+
+        ts = time.time()
+        motion = md.process(addr, size, width, height)
+        data = pack(ts, addr, size, width, height, force_motion or motion)
+
+        main_lock.acquire()
+
+        replies = 0
+
+        for name, child in childs.items():
+            # restart died child
+            if child['pid'] == 0:
+                if time.monotonic() < child['start'] + 3.0:
+                    continue
+
+                # create pipe
+                r, w = os.pipe()
+
+                # fork
+                with childs_lock:
+                    pid = os.fork()
+
+                if pid == 0:
+                    # child
+                    del md
+                    os.close(w)
+                    os.close(outr)
+                    for child in childs.values():
+                        if child['pid'] != 0:
+                            os.close(child['pipe'])
+                    plugin_start(name, r, outw, width, height, v4l2.fps)
+                    os._exit(0)
+
+                # parent
+                with childs_lock:
+                    child['pid'] = pid
+                    child['pipe'] = w
+                    child['start'] = time.monotonic()
+
+                os.close(r)
+
+            # send frame to child
+            try:
+                os.write(child['pipe'], data)
+            except Exception:
+                pass
+
+            replies += 1
+
+        # wait frame release
+        while replies > 0:
+            replies -= len(os.read(outr, replies))
+
+        main_lock.release()
+
+        v4l2.qbuf()
+
+    v4l2.stop()
+    v4l2.close()
+
+
+if __name__ == '__main__':
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s [%(name)s] %(message)s'
+    )
+
+    try:
+        main()
+    except KeyboardInterrupt:
+        os._exit(0)

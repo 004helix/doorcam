@@ -1,0 +1,11 @@
+class Plugin:
+    def __init__(self, logger, release_cb, initial_width, initial_height, fps):
+        self.cb = release_cb
+        self.log = logger
+
+    def release(self):
+        self.cb()
+
+    def process(self, ts, jpeg, w, h, motion):
+        self.log.info(f'AZAZA {jpeg} {w} {h} {motion}')
+        self.release()
