@@ -8,7 +8,9 @@ ROOT = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     '..'
 ))
-FONT = os.path.join(ROOT, 'share', 'RobotoMono-Regular.ttf')
+SHARE = os.path.join(ROOT, 'share')
+FONT = os.path.join(SHARE, 'RobotoMono-Regular.ttf')
+
 
 
 #
@@ -42,9 +44,16 @@ class Plugin:
         )
 
         cmd = ['ffmpjpeg-httpd', '-a', '127.0.0.1', '-p', '8081']
-        self.stream = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        logger.info('httpd @ 127.0.0.1:8081 started')
+        self.stream1 = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        logger.info('httpd @ 127.0.0.1:8098 started')
         logger.info('    -> {}'.format(' '.join(cmd)))
+        mpjpeg_fd = self.stream1.stdin.fileno()
+
+        cmd = ['vp9-streamer', '-A', '127.0.0.1', '-P', '8099', 'br0', 'br10', 'br20']
+        self.stream2 = subprocess.Popen(cmd, cwd=SHARE, stdin=subprocess.PIPE)
+        logger.info('httpd @ 127.0.0.1:8099 started')
+        logger.info('    -> {}'.format(' '.join(cmd)))
+        ivf_fd = self.stream2.stdin.fileno()
 
         vfilter = (
             'scale_vaapi=format=nv12:w=960:h=540,hwmap=mode=read+write+direct,'
@@ -52,7 +61,7 @@ class Plugin:
             'x=10:y=10:fontcolor=white:fontsize=20:'
             'shadowcolor=black:shadowx=-2:shadowy=-2:'
             "text='%{metadata\\:DateTimeOriginal}',"
-            'format=nv12,hwmap'
+            'format=nv12,hwmap,split[mjpeg][vp9]'
         )
         cmd = [
             'ffmpeg', '-nostdin', '-nostats', '-hide_banner',
@@ -60,12 +69,17 @@ class Plugin:
             '-hwaccel', 'vaapi',
             '-hwaccel_device', '/dev/dri/renderD128',
             '-hwaccel_output_format', 'vaapi',
-            '-f', 'mpjpeg', '-i', '-','-vf', vfilter,
-            '-c:v', 'mjpeg_vaapi', '-global_quality', '85', '-f', 'mpjpeg', '-'
+            '-f', 'mpjpeg', '-i', '-','-filter_complex', vfilter,
+            '-map', '[mjpeg]', '-c:v', 'mjpeg_vaapi', '-global_quality', '85', '-f', 'mpjpeg', 'pipe:' + str(mpjpeg_fd),
+            '-map', '[vp9]', '-c:v', 'vp9_vaapi', '-b:v', '1M', '-g', '15', '-f', 'ivf', 'pipe:' + str(ivf_fd),
         ]
+        # use libva-intel-driver for VP9
+        env = os.environ.copy()
+        env['LIBVA_DRIVER_NAME'] = 'i965'
         self.scaler = subprocess.Popen(cmd,
-                                       stdin=subprocess.PIPE,
-                                       stdout=self.stream.stdin)
+                                       env=env,
+                                       pass_fds=(mpjpeg_fd, ivf_fd),
+                                       stdin=subprocess.PIPE)
 
         logger.info('scaler started')
         logger.info('    -> {}'.format(' '.join(cmd)))
