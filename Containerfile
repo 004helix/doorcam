@@ -44,6 +44,7 @@ RUN \
   cd /app/src && git clone https://github.com/004helix/vp9-streamer.git && \
   cd vp9-streamer && go build -o ../../bin/vp9-streamer *.go && mv index.html ../../share && \
   cd /app/src/doorcam && rm -rf build && meson build && ninja -C build && \
+  mv build/qrtest /app/bin && \
   mv build/libqrscan.so /app/lib && \
   mv build/libmotion.so /app/lib && \
   mv build/libv4l2mjpg.so /app/lib && \

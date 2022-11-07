@@ -365,7 +365,7 @@ void *v4l2_dqbuf(struct context *ctx,
     fd.events = POLLIN;
 
     while (msec < timeout) {
-        ret = poll(&fd, 1, 10);
+        ret = poll(&fd, 1, 100);
 
         if (ret < 0) {
             if (errno == EINTR || errno == EAGAIN)
@@ -374,7 +374,7 @@ void *v4l2_dqbuf(struct context *ctx,
         }
 
         if (ret == 0) {
-            msec += 10;
+            msec += 100;
             continue;
         }
 

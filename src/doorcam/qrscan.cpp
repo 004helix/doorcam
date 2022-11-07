@@ -104,8 +104,8 @@ QRScan::QRScan(const char *undistort_path,
     );
 
     // https://github.com/opencv/opencv/issues/22235
-    //detector.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-    //detector.setPreferableTarget(cv::dnn::DNN_TARGET_OPENCL);
+    detector.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+    detector.setPreferableTarget(cv::dnn::DNN_TARGET_OPENCL);
 
     // save indistorted image size
     scan_size = cv::Size(scan_width, scan_height);

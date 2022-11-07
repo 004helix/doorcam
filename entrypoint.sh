@@ -34,8 +34,14 @@ export USER=app
 export HOME=/app
 export PT_NOENV=1
 
+SUEXEC="setpriv --reuid app --regid app --init-groups --inh-caps=-all"
+
+# build cache
+(cd /app/share && $SUEXEC /app/bin/qrtest 289.jpg)
+
+# run doorcam
 while :; do
-    setpriv --reuid app --regid app --init-groups --inh-caps=-all /app/doorcam &
+    $SUEXEC /app/doorcam &
     app=$!
     wait
     sleep 1

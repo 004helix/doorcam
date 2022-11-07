@@ -11,6 +11,10 @@ project(
     ],
 )
 
+# define march=native
+add_global_arguments('-march=native', language: 'c')
+add_global_arguments('-march=native', language: 'cpp')
+
 # define OpenCL version
 add_global_arguments('-DCL_TARGET_OPENCL_VERSION=300', language: 'cpp')
 
@@ -32,6 +36,22 @@ dbr_include_dir = include_directories('include')
 dbr = declare_dependency(
     link_args: ['-L' + dbr_lib_dir, '-l' + dbr_lib],
     include_directories: dbr_include_dir
+)
+
+# qrtest
+qrtest_dependencies = [
+    opencv,
+    opencl,
+]
+
+qrtest_sources = [
+    'qrtest.cpp'
+]
+
+executable(
+    'qrtest',
+    qrtest_sources,
+    dependencies: qrtest_dependencies,
 )
 
 # libqrscan.so
@@ -60,7 +80,6 @@ shared_library(
 shared_library(
     'motion',
     ['motion.c'],
-    c_args: '-msse4.2',
 )
 
 # libv4l2mjpg.so

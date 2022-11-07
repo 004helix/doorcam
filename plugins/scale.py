@@ -75,7 +75,7 @@ class Plugin:
         ]
         # use libva-intel-driver for VP9
         env = os.environ.copy()
-        env['LIBVA_DRIVER_NAME'] = 'i965'
+        #env['LIBVA_DRIVER_NAME'] = 'i965'
         self.scaler = subprocess.Popen(cmd,
                                        env=env,
                                        pass_fds=(mpjpeg_fd, ivf_fd),

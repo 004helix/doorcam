@@ -92,7 +92,7 @@ class Recorder:
         ]
         # use libva-intel-driver for VP9
         env = os.environ.copy()
-        env['LIBVA_DRIVER_NAME'] = 'i965'
+        #env['LIBVA_DRIVER_NAME'] = 'i965'
         encoder = subprocess.Popen(cmd,
                                    env=env,
                                    stdin=subprocess.PIPE,
