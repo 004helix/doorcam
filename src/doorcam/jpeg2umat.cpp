@@ -354,7 +354,7 @@ void jpeg2umat::decode2gray(void *jpeg, size_t size, cv::UMat &dst)
     // (only Y plane -> grayscale image)
     cv::ocl::convertFromImage(cl_frame->data[0], dst);
 
-    // clenup
+    // cleanup
     av_frame_free(&cl_frame);
     av_frame_free(&frame);
 }

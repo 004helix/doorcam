@@ -1,4 +1,4 @@
-FROM fedora:36 AS base
+FROM fedora:38 AS base
 
 RUN \
   dnf install -y \

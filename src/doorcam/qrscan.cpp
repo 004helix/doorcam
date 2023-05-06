@@ -61,8 +61,8 @@ class QRScan {
         //   - decode jpeg using VAAPI / convert to NV12
         //   - copy luminance plane to OpenCV's UMat
         //   - undistort / scale grayscale image
-        // CPU part:
         //   - run WeChatCV's DNN to find QR Code objects
+        // CPU part:
         //   - run Dynamsoft Barcode Reader to decode found objects
         //   - store results
         int process_jpeg(void *data, size_t size);
